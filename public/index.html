@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Starlink Monitor</title>
+<style>
+  :root {
+    --bg: #0f1216; --panel: #171b21; --panel2: #1d222a; --border: #2a303a;
+    --text: #e6e9ee; --muted: #8b93a1; --accent: #4ea1ff; --up: #b98cff;
+    --good: #3fb68b; --warn: #e5a93a; --bad: #e5534b;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 14px 20px; border-bottom: 1px solid var(--border); }
+  header h1 { font-size: 18px; margin: 0; font-weight: 600; }
+  .pill { padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+  .pill.ok { background: rgba(63,182,139,.15); color: var(--good); }
+  .pill.bad { background: rgba(229,83,75,.15); color: var(--bad); }
+  header .meta { color: var(--muted); font-size: 12px; margin-left: auto; }
+  main { padding: 16px 20px 40px; max-width: 1400px; margin: 0 auto; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-bottom: 16px; }
+  .tile { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+  .tile .label { color: var(--muted); font-size: 12px; }
+  .tile .value { font-size: 22px; font-weight: 600; margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .tile .sub { color: var(--muted); font-size: 11px; margin-top: 2px; }
+  .good { color: var(--good); } .warn { color: var(--warn); } .bad { color: var(--bad); }
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 12px; margin-bottom: 12px; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; min-width: 0; }
+  .panel h2 { font-size: 13px; font-weight: 600; margin: 0 0 8px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  .chart { position: relative; height: 220px; }
+  .section-head { display: flex; align-items: center; gap: 10px; margin: 20px 0 10px; }
+  .section-head h2 { font-size: 15px; margin: 0; }
+  .ranges button { background: var(--panel2); color: var(--muted); border: 1px solid var(--border); padding: 4px 10px; border-radius: 6px; cursor: pointer; font: inherit; font-size: 12px; }
+  .ranges button.active { color: var(--text); border-color: var(--accent); }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 500; }
+  .scroll { max-height: 320px; overflow-y: auto; }
+  .map-wrap { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-start; }
+  canvas#map { width: 260px; height: 260px; border-radius: 50%; background: #0b0d10; }
+  dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; margin: 0; font-size: 13px; }
+  dt { color: var(--muted); } dd { margin: 0; font-variant-numeric: tabular-nums; }
+  .legend { font-size: 11px; color: var(--muted); margin-top: 6px; }
+  .legend span { display: inline-block; width: 10px; height: 10px; border-radius: 2px; vertical-align: middle; margin: 0 4px 0 10px; }
+  @media (max-width: 520px) { .grid2 { grid-template-columns: 1fr; } main, header { padding-left: 12px; padding-right: 12px; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Starlink Monitor</h1>
+  <span id="state" class="pill bad">Connecting…</span>
+  <span class="meta" id="meta"></span>
+</header>
+<main>
+  <div class="tiles" id="tiles"></div>
+
+  <div class="section-head"><h2>Last 15 minutes</h2><span class="meta" style="color:var(--muted);font-size:12px">per-second, from the dish</span></div>
+  <div class="grid2">
+    <div class="panel"><h2>Throughput (Mbps)</h2><div class="chart"><canvas id="liveThroughput"></canvas></div></div>
+    <div class="panel"><h2>Latency (ms) &amp; ping drop</h2><div class="chart"><canvas id="liveLatency"></canvas></div></div>
+  </div>
+
+  <div class="section-head">
+    <h2>History</h2>
+    <div class="ranges" id="ranges">
+      <button data-h="1">1h</button><button data-h="6">6h</button><button data-h="24" class="active">24h</button><button data-h="168">7d</button>
+    </div>
+  </div>
+  <div class="grid2">
+    <div class="panel"><h2>Throughput (Mbps, 1-min avg &amp; peak)</h2><div class="chart"><canvas id="histThroughput"></canvas></div></div>
+    <div class="panel"><h2>Latency (ms)</h2><div class="chart"><canvas id="histLatency"></canvas></div></div>
+    <div class="panel"><h2>Ping drop (%)</h2><div class="chart"><canvas id="histDrop"></canvas></div></div>
+    <div class="panel"><h2>Power draw (W)</h2><div class="chart"><canvas id="histPower"></canvas></div></div>
+  </div>
+
+  <div class="grid2">
+    <div class="panel">
+      <h2>Outages &amp; events (30 days)</h2>
+      <div class="scroll"><table><thead><tr><th>When</th><th>Duration</th><th>Cause</th></tr></thead><tbody id="outages"></tbody></table></div>
+    </div>
+    <div class="panel">
+      <h2>Obstruction map &amp; alignment</h2>
+      <div class="map-wrap">
+        <div>
+          <canvas id="map" width="246" height="246"></canvas>
+          <div class="legend">N up · centre = straight up<span style="background:#3b82c4"></span>clear<span style="background:#e5534b"></span>obstructed</div>
+        </div>
+        <dl id="align"></dl>
+      </div>
+    </div>
+  </div>
+</main>
+<script src="/vendor/chart.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+{
+  "name": "starlink-monitor",
+  "version": "1.0.0",
+  "description": "Standalone Starlink dish monitor and dashboard",
+  "main": "server.js",
+  "private": true,
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "chart.js": "^4.4.0"
+  },
+  "license": "MIT"
+}
