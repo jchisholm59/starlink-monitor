@@ -72,7 +72,7 @@ Some quirks of the dish API that this app handles:
 
 ## API
 
-All endpoints return JSON.
+All endpoints return JSON, with `Access-Control-Allow-Origin: *` so other dashboards (such as the Home Assistant card in `jchisholm59/ha-cards`) can read them from their own pages.
 
 | Endpoint                   | Returns |
 |----------------------------|---------|

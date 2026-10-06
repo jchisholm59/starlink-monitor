@@ -237,7 +237,9 @@ async function pollObstructionMap() {
 // ---- HTTP -----------------------------------------------------------------
 
 function sendJson(res, obj) {
-  res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+  // CORS: lets other dashboards (e.g. the Home Assistant starlink-card) read the API from their own page.
+  // Read-only GET data on the LAN, so any origin is fine.
+  res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*' });
   res.end(JSON.stringify(obj));
 }
 
