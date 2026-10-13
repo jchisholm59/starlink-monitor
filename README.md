@@ -11,6 +11,7 @@ It runs as a single Node process (pm2-friendly) with one dependency, Chart.js.
 - **History charts** built from 1-minute samples, for 1 h, 6 h, 24 h or 7 d: average and peak throughput, latency, ping drop and power draw. Periods when the dish is unreachable show as gaps, not zeros.
 - **Outage and event log** (30 days): short outages such as `NO_PINGS` or `NO_DOWNLINK`, plus dish events like update reboots, with start times and durations.
 - **Obstruction map**: the dish's view of the sky, with obstructed patches in red, plus actual and ideal pointing (tilt, azimuth, elevation).
+- **Router and connected clients** (Starlink Gen 2/3 router, same local API on `192.168.1.1:9000`): router firmware, uptime and last boot reason, internet / PoP / dish ping, public and WAN IP, PoE power, alerts; and every connected device with its IP, band (2.4 GHz, 5 GHz, 5 GHz high, Ethernet), signal and SNR, link rates, current throughput, data used and connected time. The 1-minute samples also keep the client count and the router's internet ping. MAC addresses come from the router partly masked (`ac:eb:e6:XX:XX:XX`). The server names itself in the list when the router has no host name for it.
 - **Device info**: software and hardware version, Ethernet link speed, update state, bandwidth-restriction reason and the scheduled update-reboot hour.
 - **JSON API** for other dashboards (Homepage, Home Assistant, etc.).
 
@@ -50,6 +51,7 @@ Set these as environment variables, or in `ecosystem.config.js`:
 |-----------|---------------------------|--------------------------|
 | `PORT`    | `7000`                    | HTTP port                |
 | `DISH`    | `192.168.100.1:9200`      | Dish gRPC address        |
+| `ROUTER`  | `192.168.1.1:9000`        | Starlink router gRPC address; empty to turn the router section off (e.g. bypass mode with no Starlink router) |
 | `GRPCURL` | `/usr/local/bin/grpcurl`  | Path to the grpcurl binary |
 
 ## How it works
@@ -58,6 +60,7 @@ Set these as environment variables, or in `ecosystem.config.js`:
 |-------------------------|--------------|----------|
 | Status + 15-min history | every 10 s   | memory (live view) |
 | 1-minute sample         | every 60 s   | 7 days, in `data/samples.jsonl` |
+| Router status + clients | every 15 s   | memory (`/api/router`) |
 | Outages & events        | every 10 s   | 30 days, in `data/outages.json` |
 | Obstruction map         | every 10 min | memory |
 
@@ -80,6 +83,7 @@ All endpoints return JSON, with `Access-Control-Allow-Origin: *` so other dashbo
 | `GET /api/samples?hours=N` | 1-minute samples for the last `N` hours (1–168), downsampled to at most 720 points |
 | `GET /api/outages`         | Outages and events for the last 30 days, newest first |
 | `GET /api/obstruction`     | Obstruction map: `rows`, `cols`, and a flat `snr` array (−1 = no data, 0–1 = signal quality) |
+| `GET /api/router`          | Starlink router status and connected clients (`enabled: false` when `ROUTER` is empty) |
 
 Example: current download speed for a dashboard widget:
 

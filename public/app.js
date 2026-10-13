@@ -185,9 +185,66 @@ async function refreshMap() {
   [0.33, 0.66, 1].forEach((f) => { ctx.beginPath(); ctx.arc(cv.width / 2, cv.height / 2, (cv.width / 2 - 1) * f, 0, Math.PI * 2); ctx.stroke(); });
 }
 
+// ---- router -------------------------------------------------------------------
+
+const bytes = (b) => (b == null ? '—' : b >= 1e9 ? `${(b / 1e9).toFixed(1)} GB` : b >= 1e6 ? `${(b / 1e6).toFixed(0)} MB` : `${(b / 1e3).toFixed(0)} kB`);
+const esc = (v) => String(v ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+const mb = (v) => (v == null ? '—' : v >= 100 ? v.toFixed(0) : v >= 10 ? v.toFixed(1) : v.toFixed(2));
+function bars(dbm) {
+  if (dbm == null) return '—';
+  const n = dbm > -55 ? 4 : dbm > -67 ? 3 : dbm > -75 ? 2 : 1;
+  const cls = n >= 3 ? 'good' : n === 2 ? 'warn' : 'bad';
+  return `<span class="sig ${cls}">${[4, 7, 10, 12].map((h, i) => `<i style="height:${h}px" class="${i < n ? 'f' : ''}"></i>`).join('')}</span>${dbm}`;
+}
+
+async function refreshRouter() {
+  let d;
+  try {
+    d = await (await fetch('/api/router')).json();
+  } catch {
+    return;
+  }
+  const sec = document.getElementById('routerSec');
+  sec.hidden = !d.enabled;
+  if (!d.enabled) return;
+  const r = d.router;
+  const fresh = d.lastOk && Date.now() - d.lastOk < 60000;
+  document.getElementById('routerMeta').textContent = r
+    ? `${r.hardware || ''} · ${r.softwareVersion || ''} · ${d.address}${fresh ? '' : ` · unreachable${d.lastError ? ': ' + d.lastError : ''}`}`
+    : `${d.address} · ${d.lastError || 'waiting…'}`;
+  if (!r) return;
+  const wifi = r.clients.filter((c) => c.band !== 'Ethernet');
+  const by = (b) => r.clients.filter((c) => c.band === b).length;
+  const weak = wifi.filter((c) => c.signal != null && c.signal <= -75).length;
+  const nowDown = r.clients.reduce((a, c) => a + (c.band === 'Ethernet' ? 0 : c.nowDown || 0), 0);
+  document.getElementById('routerTiles').innerHTML = [
+    tile('Clients', r.clients.length, `${wifi.length} Wi-Fi · ${by('Ethernet')} wired`),
+    tile('Bands', `${by('2.4 GHz')} / ${by('5 GHz') + by('5 GHz high')}`, '2.4 / 5 GHz clients'),
+    tile('Weak signal', weak, 'at or below -75 dBm', weak ? 'warn' : 'good'),
+    tile('Internet ping', `${fmt(r.pingMs, 0)}<small> ms</small>`, `PoP ${fmt(r.popPingMs, 0)} ms · dish ${fmt(r.dishPingMs, 1)} ms`, r.pingMs > 80 ? 'warn' : ''),
+    tile('Wi-Fi now', `${mb(nowDown)}<small> Mbps</small>`, 'to Wi-Fi clients, 15 s avg'),
+    tile('Public IP', r.publicIp || '—', `WAN ${r.wanIp || '—'}`, 'sm'),
+    tile('Router uptime', fmtDuration(r.uptimeS), `boot #${r.bootcount ?? '—'} · ${pretty(r.lastBootReason)}`),
+    tile('Router power', `${fmt(r.poeW, 1)}<small> W</small>`, `PoE ${fmt(r.poeV, 1)} V`),
+    tile('Alerts', r.alerts.length || 'None', r.alerts.map(pretty).join(', ') || pretty(r.updateState), r.alerts.length ? 'warn' : 'good'),
+  ].join('');
+  const order = { Ethernet: 0, '5 GHz high': 1, '5 GHz': 2, '2.4 GHz': 3 };
+  const list = [...r.clients].sort((a, b) => (order[a.band] ?? 9) - (order[b.band] ?? 9) || String(a.name || a.ip).localeCompare(String(b.name || b.ip)));
+  document.getElementById('routerClients').innerHTML = list.map((c) => `<tr>
+    <td>${esc(c.name || '—')}<div class="sub">${esc(c.mac || '')}</div></td>
+    <td>${esc(c.ip || '—')}</td>
+    <td>${esc(c.band || '—')}${c.width ? `<div class="sub">${c.width} MHz</div>` : ''}</td>
+    <td class="num">${bars(c.signal)}${c.snr != null ? `<div class="sub">SNR ${c.snr} dB</div>` : ''}</td>
+    <td class="num">${mb(c.linkDown)} / ${mb(c.linkUp)}</td>
+    <td class="num">${mb(c.nowDown)} / ${mb(c.nowUp)}</td>
+    <td class="num">${bytes(c.bytesDown)} / ${bytes(c.bytesUp)}</td>
+    <td class="num">${c.connectedS != null ? fmtDuration(c.connectedS) : '—'}</td></tr>`).join('');
+}
+
 // ---- loop -------------------------------------------------------------------
 
-refreshLive(); refreshHistory(); refreshOutages(); refreshMap();
+refreshLive(); refreshHistory(); refreshOutages(); refreshMap(); refreshRouter();
+setInterval(refreshRouter, 15_000);
 setInterval(refreshLive, 10_000);
 setInterval(refreshHistory, 60_000);
 setInterval(refreshOutages, 60_000);

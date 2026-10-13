@@ -24,6 +24,7 @@
   .tile .label { color: var(--muted); font-size: 12px; }
   .tile .value { font-size: 22px; font-weight: 600; margin-top: 2px; font-variant-numeric: tabular-nums; }
   .tile .sub { color: var(--muted); font-size: 11px; margin-top: 2px; }
+  .tile .value.sm { font-size: 16px; padding-top: 5px; }
   .good { color: var(--good); } .warn { color: var(--warn); } .bad { color: var(--bad); }
   .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 12px; margin-bottom: 12px; }
   .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; min-width: 0; }
@@ -43,6 +44,13 @@
   dt { color: var(--muted); } dd { margin: 0; font-variant-numeric: tabular-nums; }
   .legend { font-size: 11px; color: var(--muted); margin-top: 6px; }
   .legend span { display: inline-block; width: 10px; height: 10px; border-radius: 2px; vertical-align: middle; margin: 0 4px 0 10px; }
+  .sig { display: inline-flex; align-items: flex-end; gap: 2px; height: 12px; margin-right: 6px; vertical-align: -1px; }
+  .sig i { width: 3px; background: var(--border); border-radius: 1px; }
+  .sig.good i.f { background: var(--good); } .sig.warn i.f { background: var(--warn); } .sig.bad i.f { background: var(--bad); }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td .sub { color: var(--muted); font-size: 11px; }
+  .tbl { overflow-x: auto; }
+  .tbl td, .tbl th { white-space: nowrap; }
   @media (max-width: 520px) { .grid2 { grid-template-columns: 1fr; } main, header { padding-left: 12px; padding-right: 12px; } }
 </style>
 </head>
@@ -90,6 +98,16 @@
       </div>
     </div>
   </div>
+
+  <section id="routerSec" hidden>
+    <div class="section-head"><h2>Router</h2><span class="meta" id="routerMeta" style="color:var(--muted);font-size:12px"></span></div>
+    <div class="tiles" id="routerTiles"></div>
+    <div class="panel">
+      <h2>Connected clients</h2>
+      <div class="tbl"><table><thead><tr><th>Name</th><th>IP</th><th>Band</th><th class="num">Signal</th><th class="num">Link ↓/↑ Mbps</th><th class="num">Now ↓/↑ Mbps</th><th class="num">Data ↓/↑</th><th class="num">Connected</th></tr></thead>
+      <tbody id="routerClients"></tbody></table></div>
+    </div>
+  </section>
 </main>
 <script src="/vendor/chart.js"></script>
 <script src="/app.js"></script>

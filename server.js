@@ -3,12 +3,15 @@
 // 7 days of 1-minute samples on disk, and serves a dashboard + JSON API.
 
 const http = require('http');
+const os = require('os');
 const fs = require('fs');
 const path = require('path');
 const { execFile } = require('child_process');
 
 const PORT = Number(process.env.PORT || 7000);
 const DISH = process.env.DISH || '192.168.100.1:9200';
+// The Starlink router (Gen 2/3) has the same API on :9000; '' turns the router section off.
+const ROUTER = process.env.ROUTER ?? '192.168.1.1:9000';
 const GRPCURL = process.env.GRPCURL || '/usr/local/bin/grpcurl';
 const DATA_DIR = path.join(__dirname, 'data');
 const SAMPLES_FILE = path.join(DATA_DIR, 'samples.jsonl');
@@ -17,6 +20,7 @@ const PUBLIC_DIR = path.join(__dirname, 'public');
 const CHART_JS = path.join(__dirname, 'node_modules/chart.js/dist/chart.umd.min.js');
 
 const LIVE_INTERVAL_MS = 10_000;
+const ROUTER_INTERVAL_MS = 15_000;
 const SAMPLE_INTERVAL_MS = 60_000;
 const MAP_INTERVAL_MS = 10 * 60_000;
 const SAMPLE_RETENTION_S = 7 * 86400;
@@ -27,11 +31,11 @@ fs.mkdirSync(DATA_DIR, { recursive: true });
 
 // ---- dish access ---------------------------------------------------------
 
-function dish(request) {
+function dish(request, target = DISH) {
   return new Promise((resolve, reject) => {
     execFile(
       GRPCURL,
-      ['-plaintext', '-max-time', '8', '-d', JSON.stringify(request), DISH, 'SpaceX.API.Device.Device/Handle'],
+      ['-plaintext', '-max-time', '8', '-d', JSON.stringify(request), target, 'SpaceX.API.Device.Device/Handle'],
       { timeout: 10_000, maxBuffer: 8 * 1024 * 1024 },
       (err, stdout, stderr) => {
         if (err) return reject(new Error((stderr || err.message).trim().slice(0, 200)));
@@ -118,7 +122,91 @@ const state = {
   obstructionMap: null,
   samples: [],
   outages: new Map(), // start second -> outage
+  router: null,
+  routerOk: null,
+  routerError: null,
 };
+
+// ---- router ------------------------------------------------------------------
+
+const BANDS = { RF_2GHZ: '2.4 GHz', RF_5GHZ: '5 GHz', RF_5GHZ_HIGH: '5 GHz high', ETH: 'Ethernet' };
+// This server's own addresses, to name it in the client list (the router often has no host name for it).
+function ownIps() {
+  const out = new Set();
+  for (const list of Object.values(os.networkInterfaces())) for (const a of list || []) out.add(a.address);
+  return out;
+}
+const pos = (v) => (num(v) == null ? null : Math.max(0, num(v)));
+
+function summarizeRouter(w) {
+  const info = w.deviceInfo || {};
+  const own = ownIps();
+  const leases = new Map();
+  for (const d of w.dhcpServers || []) for (const l of d.leases || []) leases.set(l.ipAddress, l);
+  const clients = (w.clients || [])
+    .filter((c) => c.role !== 'CONTROLLER')
+    .map((c) => {
+      const rx = c.rxStats || {}, tx = c.txStats || {};
+      const eth = c.iface === 'ETH';
+      // rx/tx are the router's view: rx = from the client (its upload), tx = to the client (its download).
+      // Ethernet clients have no byte counters; downloadMb is plausible there, uploadMb is not (petabytes), so only down.
+      const ip = c.ipAddress || null;
+      return {
+        id: String(c.clientId || c.macAddress),
+        name: c.name || leases.get(ip)?.hostname || (own.has(ip) ? `${os.hostname()} (this server)` : null),
+        ip,
+        mac: c.macAddress || null,
+        band: BANDS[c.iface] || c.iface || null,
+        signal: num(c.signalStrength),
+        snr: num(c.snr),
+        width: num(c.channelWidth),
+        linkDown: pos(tx.rateMbpsLast15s ?? tx.rateMbps),
+        linkUp: pos(rx.rateMbpsLast15s ?? rx.rateMbps),
+        nowDown: pos(tx.throughputMbpsLast15sAvg),
+        nowUp: pos(rx.throughputMbpsLast15sAvg),
+        bytesDown: eth ? (num(c.downloadMb) != null ? num(c.downloadMb) * 1e6 : null) : num(tx.bytes),
+        bytesUp: eth ? null : num(rx.bytes),
+        connectedS: num(c.associatedTimeS),
+        idleS: num(c.noDataIdleS),
+        hops: num(c.hopsFromController),
+      };
+    });
+  const nets = (w.config?.networks || []).map((n) => ({
+    subnet: n.ipv4 || null,
+    ssids: [...new Set((n.basicServiceSets || []).map((b) => b.ssid))],
+    bands: (n.basicServiceSets || []).map((b) => BANDS[b.band] || b.band),
+  }));
+  return {
+    id: info.id || null,
+    hardware: info.hardwareIndex ? info.hardwareIndex.replace(/^ROUTER_GEN_/, 'Gen ') : info.hardwareVersion || null,
+    softwareVersion: info.softwareVersion || null,
+    uptimeS: num(w.deviceState?.uptimeS),
+    bootcount: num(info.bootcount),
+    lastBootReason: info.boot?.lastReason || null,
+    wanIp: w.ipv4WanAddress || null,
+    publicIp: w.publicIpv4 || null,
+    pingMs: num(w.pingLatencyMs),
+    popPingMs: num(w.popPingLatencyMs),
+    dishPingMs: num(w.dishPingLatencyMs),
+    poeW: num(w.poeStats?.poePower),
+    poeV: num(w.poeStats?.vsnsVin),
+    updateState: w.softwareUpdateStats?.state || null,
+    alerts: Object.entries(w.alerts || {}).filter(([, v]) => v === true).map(([k]) => k),
+    networks: nets,
+    clients,
+  };
+}
+
+async function pollRouter() {
+  try {
+    const r = await dish({ get_status: {} }, ROUTER);
+    state.router = summarizeRouter(r.wifiGetStatus || {});
+    state.routerOk = Date.now();
+    state.routerError = null;
+  } catch (e) {
+    state.routerError = e.message;
+  }
+}
 
 function loadPersisted() {
   const cutoff = Date.now() / 1000 - SAMPLE_RETENTION_S;
@@ -214,6 +302,10 @@ function recordSample() {
       signal: s.signalQuality,
     };
   }
+  if (state.routerOk && Date.now() - state.routerOk < 60_000) {
+    sample.clients = state.router.clients.length;
+    sample.routerPing = state.router.pingMs == null ? null : +state.router.pingMs.toFixed(1);
+  }
   state.samples.push(sample);
   fs.appendFile(SAMPLES_FILE, JSON.stringify(sample) + '\n', (e) => e && console.error('append failed:', e.message));
 }
@@ -260,7 +352,7 @@ function sendFile(res, file) {
 function downsample(samples, max) {
   if (samples.length <= max) return samples;
   const size = Math.ceil(samples.length / max);
-  const keys = ['down', 'up', 'downPeak', 'latency', 'drop', 'power', 'obstruction', 'gpsSats', 'signal'];
+  const keys = ['down', 'up', 'downPeak', 'latency', 'drop', 'power', 'obstruction', 'gpsSats', 'signal', 'clients', 'routerPing'];
   const out = [];
   for (let i = 0; i < samples.length; i += size) {
     const b = samples.slice(i, i + size);
@@ -269,6 +361,7 @@ function downsample(samples, max) {
     if (!online.length) o.offline = true;
     else keys.forEach((k) => {
       const vals = online.map((s) => s[k]);
+      if (vals.every((v) => v == null)) return;
       o[k] = k === 'downPeak' ? Math.max(...vals.filter((v) => v != null)) : avg(vals);
     });
     out.push(o);
@@ -291,6 +384,9 @@ const server = http.createServer((req, res) => {
     return sendJson(res, [...state.outages.values()].sort((a, b) => b.start - a.start));
   }
   if (p === '/api/obstruction') return sendJson(res, state.obstructionMap);
+  if (p === '/api/router') {
+    return sendJson(res, { enabled: !!ROUTER, router: state.router, lastOk: state.routerOk, lastError: state.routerError, address: ROUTER || null });
+  }
   if (p === '/vendor/chart.js') return sendFile(res, CHART_JS);
   const file = path.normalize(path.join(PUBLIC_DIR, p === '/' ? 'index.html' : p));
   if (!file.startsWith(PUBLIC_DIR)) {
@@ -307,5 +403,9 @@ pollLive().then(() => {
 });
 pollObstructionMap();
 setInterval(pollObstructionMap, MAP_INTERVAL_MS);
+if (ROUTER) {
+  pollRouter();
+  setInterval(pollRouter, ROUTER_INTERVAL_MS);
+}
 setInterval(compactSamplesFile, 6 * 3600_000);
-server.listen(PORT, '0.0.0.0', () => console.log(`starlink-monitor on :${PORT}, dish ${DISH}`));
+server.listen(PORT, '0.0.0.0', () => console.log(`starlink-monitor on :${PORT}, dish ${DISH}${ROUTER ? `, router ${ROUTER}` : ''}`));
