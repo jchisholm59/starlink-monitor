@@ -16,6 +16,7 @@ const GRPCURL = process.env.GRPCURL || '/usr/local/bin/grpcurl';
 const DATA_DIR = path.join(__dirname, 'data');
 const SAMPLES_FILE = path.join(DATA_DIR, 'samples.jsonl');
 const OUTAGES_FILE = path.join(DATA_DIR, 'outages.json');
+const REBOOTS_FILE = path.join(DATA_DIR, 'reboots.json');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const CHART_JS = path.join(__dirname, 'node_modules/chart.js/dist/chart.umd.min.js');
 
@@ -105,6 +106,7 @@ function summarizeStatus(s) {
     softwareVersion: info.softwareVersion || null,
     hardwareVersion: info.hardwareVersion || null,
     bootcount: num(info.bootcount),
+    lastBootReason: info.boot?.lastReason || null,
     updateState: s.softwareUpdateState || null,
     rebootHour: num((s.config || {}).swupdateRebootHour),
     alerts: Object.keys(s.alerts || {}).filter((k) => s.alerts[k] === true),
@@ -122,6 +124,7 @@ const state = {
   obstructionMap: null,
   samples: [],
   outages: new Map(), // start second -> outage
+  reboots: [], // dish and router boots, oldest first
   router: null,
   routerOk: null,
   routerError: null,
@@ -201,6 +204,7 @@ async function pollRouter() {
   try {
     const r = await dish({ get_status: {} }, ROUTER);
     state.router = summarizeRouter(r.wifiGetStatus || {});
+    recordBoot('router', state.router);
     state.routerOk = Date.now();
     state.routerError = null;
   } catch (e) {
@@ -224,7 +228,12 @@ function loadPersisted() {
       for (const o of JSON.parse(fs.readFileSync(OUTAGES_FILE, 'utf8'))) state.outages.set(o.start, o);
     } catch { /* start fresh */ }
   }
-  console.log(`loaded ${state.samples.length} samples, ${state.outages.size} outages`);
+  if (fs.existsSync(REBOOTS_FILE)) {
+    try {
+      state.reboots = JSON.parse(fs.readFileSync(REBOOTS_FILE, 'utf8'));
+    } catch { /* start fresh */ }
+  }
+  console.log(`loaded ${state.samples.length} samples, ${state.outages.size} outages, ${state.reboots.length} reboots`);
 }
 
 function compactSamplesFile() {
@@ -261,12 +270,35 @@ function recordOutages(h) {
   if (added) saveOutages();
 }
 
+// A boot is new when the boot count changed (or, without one, the boot time moved by over 2 minutes). Kept for good:
+// a few a week. Software updates reboot in the night (dish: around its rebootHour), so this shows when they happen.
+function recordBoot(device, s) {
+  if (!s || s.uptimeS == null) return;
+  const at = Math.round(Date.now() / 1000 - s.uptimeS);
+  const last = state.reboots.filter((r) => r.device === device).at(-1);
+  if (last && (s.bootcount != null ? last.bootcount === s.bootcount : Math.abs(last.at - at) < 120)) return;
+  const boot = {
+    device,
+    at,
+    reason: s.lastBootReason || null,
+    softwareVersion: s.softwareVersion || null,
+    previousVersion: last ? last.softwareVersion : null,
+    bootcount: s.bootcount,
+  };
+  state.reboots.push(boot);
+  console.log(`${device} booted ${new Date(at * 1000).toISOString()}: ${boot.reason}, ${boot.previousVersion || '?'} -> ${boot.softwareVersion}`);
+  const tmp = REBOOTS_FILE + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(state.reboots));
+  fs.renameSync(tmp, REBOOTS_FILE);
+}
+
 // ---- pollers ----------------------------------------------------------------
 
 async function pollLive() {
   try {
     const [st, hi] = await Promise.all([dish({ get_status: {} }), dish({ get_history: {} })]);
     state.status = summarizeStatus(st.dishGetStatus || {});
+    recordBoot('dish', state.status);
     const h = hi.dishGetHistory || {};
     state.history = unrollHistory(h);
     recordOutages(h);
@@ -383,6 +415,7 @@ const server = http.createServer((req, res) => {
   if (p === '/api/outages') {
     return sendJson(res, [...state.outages.values()].sort((a, b) => b.start - a.start));
   }
+  if (p === '/api/reboots') return sendJson(res, [...state.reboots].reverse());
   if (p === '/api/obstruction') return sendJson(res, state.obstructionMap);
   if (p === '/api/router') {
     return sendJson(res, { enabled: !!ROUTER, router: state.router, lastOk: state.routerOk, lastError: state.routerError, address: ROUTER || null });

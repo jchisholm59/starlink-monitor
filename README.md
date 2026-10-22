@@ -62,6 +62,7 @@ Set these as environment variables, or in `ecosystem.config.js`:
 | 1-minute sample         | every 60 s   | 7 days, in `data/samples.jsonl` |
 | Router status + clients | every 15 s   | memory (`/api/router`) |
 | Outages & events        | every 10 s   | 30 days, in `data/outages.json` |
+| Dish and router reboots | on each poll | kept, in `data/reboots.json` |
 | Obstruction map         | every 10 min | memory |
 
 Each 1-minute sample averages the last 60 seconds of the dish's per-second history, so short bursts still count toward throughput. The peak is kept separately. The sample file is append-only and gets trimmed back to 7 days every 6 hours.
@@ -84,6 +85,7 @@ All endpoints return JSON, with `Access-Control-Allow-Origin: *` so other dashbo
 | `GET /api/outages`         | Outages and events for the last 30 days, newest first |
 | `GET /api/obstruction`     | Obstruction map: `rows`, `cols`, and a flat `snr` array (−1 = no data, 0–1 = signal quality) |
 | `GET /api/router`          | Starlink router status and connected clients (`enabled: false` when `ROUTER` is empty) |
+| `GET /api/reboots`         | Dish and router boots, newest first: `device`, `at` (Unix s, from uptime), `reason` (e.g. `SOFTWARE_UPDATE`), `softwareVersion`, `previousVersion`, `bootcount` |
 
 Example: current download speed for a dashboard widget:
 
