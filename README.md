@@ -36,6 +36,11 @@ npm install
 npm start            # http://localhost:7000
 ```
 
+### Run in Docker
+
+For a host without Node or grpcurl (the image downloads grpcurl): `docker compose up -d --build`. Set `DISH` / `ROUTER`
+in `docker-compose.yml`; data stays in `./data`.
+
 ### Run under pm2
 
 ```bash
@@ -53,6 +58,7 @@ Set these as environment variables, or in `ecosystem.config.js`:
 | `DISH`    | `192.168.100.1:9200`      | Dish gRPC address        |
 | `ROUTER`  | `192.168.1.1:9000`        | Starlink router gRPC address; empty to turn the router section off (e.g. bypass mode with no Starlink router) |
 | `GRPCURL` | `/usr/local/bin/grpcurl`  | Path to the grpcurl binary |
+| `SITES`   | (none)                    | Other monitors to pass through, `name=http://host:port`, comma-separated: each one's dashboard and API at `/sites/<name>/` (e.g. a second property's dish reached over Tailscale) |
 
 ## How it works
 
