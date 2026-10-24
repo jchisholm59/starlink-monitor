@@ -82,7 +82,7 @@ function tile(label, value, sub = '', cls = '') {
 async function refreshLive() {
   let live;
   try {
-    live = await (await fetch('/api/live')).json();
+    live = await (await fetch('api/live')).json();
   } catch {
     setState(false, 'Monitor unreachable');
     return;
@@ -139,7 +139,7 @@ function setState(ok, text) {
 // ---- history ----------------------------------------------------------------
 
 async function refreshHistory() {
-  const samples = await (await fetch(`/api/samples?hours=${rangeHours}`)).json();
+  const samples = await (await fetch(`api/samples?hours=${rangeHours}`)).json();
   const pts = (key) => samples.map((s) => ({ x: s.t, y: s.offline ? null : s[key] }));
   setData(charts.histThroughput, [pts('down'), pts('downPeak'), pts('up')]);
   setData(charts.histLatency, [pts('latency')]);
@@ -158,7 +158,7 @@ document.getElementById('ranges').addEventListener('click', (e) => {
 // ---- outages ----------------------------------------------------------------
 
 async function refreshOutages() {
-  const list = await (await fetch('/api/outages')).json();
+  const list = await (await fetch('api/outages')).json();
   document.getElementById('outages').innerHTML = list.length
     ? list.slice(0, 200).map((o) => `<tr><td>${clock(o.start, true)}</td><td>${fmtDuration(o.durationS)}</td><td>${pretty(o.cause)}</td></tr>`).join('')
     : '<tr><td colspan="3" style="color:var(--muted)">None recorded yet</td></tr>';
@@ -167,7 +167,7 @@ async function refreshOutages() {
 // ---- obstruction map ----------------------------------------------------------
 
 async function refreshMap() {
-  const m = await (await fetch('/api/obstruction')).json();
+  const m = await (await fetch('api/obstruction')).json();
   const cv = document.getElementById('map');
   const ctx = cv.getContext('2d');
   ctx.clearRect(0, 0, cv.width, cv.height);
@@ -200,7 +200,7 @@ function bars(dbm) {
 async function refreshRouter() {
   let d;
   try {
-    d = await (await fetch('/api/router')).json();
+    d = await (await fetch('api/router')).json();
   } catch {
     return;
   }

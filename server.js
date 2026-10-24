@@ -13,6 +13,10 @@ const DISH = process.env.DISH || '192.168.100.1:9200';
 // The Starlink router (Gen 2/3) has the same API on :9000; '' turns the router section off.
 const ROUTER = process.env.ROUTER ?? '192.168.1.1:9000';
 const GRPCURL = process.env.GRPCURL || '/usr/local/bin/grpcurl';
+// Other monitors to pass through, e.g. SITES=cottage=http://100.116.224.43:7000 serves that one's dashboard and API
+// at /sites/cottage/ (so one address, with CORS, reaches a dish this server can't).
+const SITES = Object.fromEntries((process.env.SITES || '').split(',').map((x) => x.trim().split('='))
+  .filter(([k, v]) => k && v).map(([k, v]) => [k, v.replace(/\/$/, '')]));
 const DATA_DIR = path.join(__dirname, 'data');
 const SAMPLES_FILE = path.join(DATA_DIR, 'samples.jsonl');
 const OUTAGES_FILE = path.join(DATA_DIR, 'outages.json');
@@ -360,10 +364,10 @@ async function pollObstructionMap() {
 
 // ---- HTTP -----------------------------------------------------------------
 
-function sendJson(res, obj) {
+function sendJson(res, obj, code = 200) {
   // CORS: lets other dashboards (e.g. the Home Assistant starlink-card) read the API from their own page.
   // Read-only GET data on the LAN, so any origin is fine.
-  res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*' });
+  res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*' });
   res.end(JSON.stringify(obj));
 }
 
@@ -401,9 +405,33 @@ function downsample(samples, max) {
   return out;
 }
 
+function proxySite(req, res, base, rest) {
+  const up = http.get(base + rest, { timeout: 8000 }, (r) => {
+    const headers = { 'Content-Type': r.headers['content-type'] || 'application/octet-stream', 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*' };
+    res.writeHead(r.statusCode, headers);
+    r.pipe(res);
+  });
+  up.on('timeout', () => up.destroy(new Error('timeout')));
+  up.on('error', (e) => {
+    if (res.headersSent) return res.destroy();
+    res.writeHead(502, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+    res.end(JSON.stringify({ error: `site unreachable: ${e.message}` }));
+  });
+}
+
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
   const p = url.pathname;
+  const site = p.match(/^\/sites\/([\w-]+)(\/.*)?$/);
+  if (site) {
+    const base = SITES[site[1]];
+    if (!base) return sendJson(res, { error: 'unknown site' }, 404);
+    if (!site[2]) {
+      res.writeHead(301, { Location: `${p}/${url.search}` });
+      return res.end();
+    }
+    return proxySite(req, res, base, site[2] + url.search);
+  }
   if (p === '/api/live') {
     return sendJson(res, { status: state.status, history: state.history, lastOk: state.lastOk, lastError: state.lastError, dish: DISH });
   }
@@ -441,4 +469,5 @@ if (ROUTER) {
   setInterval(pollRouter, ROUTER_INTERVAL_MS);
 }
 setInterval(compactSamplesFile, 6 * 3600_000);
-server.listen(PORT, '0.0.0.0', () => console.log(`starlink-monitor on :${PORT}, dish ${DISH}${ROUTER ? `, router ${ROUTER}` : ''}`));
+server.listen(PORT, '0.0.0.0', () => console.log(`starlink-monitor on :${PORT}, dish ${DISH}${ROUTER ? `, router ${ROUTER}` : ''}` +
+  Object.entries(SITES).map(([k, v]) => `, /sites/${k}/ -> ${v}`).join('')));
